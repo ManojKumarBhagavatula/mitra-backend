@@ -14,6 +14,28 @@ from typing import Optional
 #   why        → blend of therapist + guide (explore root cause)
 # ─────────────────────────────────────────────────────────────────────────────
 
+import os
+
+# Try to load ML model — falls back to regex if not available (e.g. Render deployment)
+MODEL_PATH = './mitra-model'
+classifier = None
+
+try:
+    from transformers import pipeline as hf_pipeline
+    import torch
+    if os.path.exists(MODEL_PATH):
+        classifier = hf_pipeline(
+            'text-classification',
+            model=MODEL_PATH,
+            tokenizer=MODEL_PATH,
+            device=-1
+        )
+        print("✅ ML model loaded")
+    else:
+        print("⚠️ Model not found — using regex fallback")
+except ImportError:
+    print("⚠️ Transformers not installed — using regex fallback")
+
 PATTERNS = {
     "emotional": [
         r"\bi feel\b", r"\bi'm (sad|upset|angry|anxious|scared|lost|empty|hurt|broken|tired)\b",
@@ -45,22 +67,27 @@ PATTERNS = {
 }
 
 def detect_patterns(text: str, current: dict) -> dict:
-    """
-    Given a user message and existing pattern counts, return updated counts.
-
-    Phase 2 upgrade path: replace regex matching with:
-        scores = classifier.predict_proba([text])[0]  # returns {label: prob}
-    and accumulate weighted scores instead of binary increments.
-    """
-    t = text.lower()
-    updated = dict(current)  # shallow copy is fine (all values are ints)
-
-    for pattern_name, regexes in PATTERNS.items():
-        for rx in regexes:
-            if re.search(rx, t):
-                updated[pattern_name] = updated.get(pattern_name, 0) + 1
-                break  # one match per pattern per message is enough
-
+    updated = dict(current)
+    
+    if classifier:
+        # Use ML model
+        result = classifier(text)[0]
+        LABEL_TO_PATTERN = {
+            'therapist': 'emotional',
+            'friend':    'venting',
+            'guide':     'advice',
+        }
+        pattern = LABEL_TO_PATTERN[result['label']]
+        updated[pattern] = round(updated.get(pattern, 0) + result['score'], 3)
+    else:
+        # Regex fallback
+        t = text.lower()
+        for pattern_name, regexes in PATTERNS.items():
+            for rx in regexes:
+                if re.search(rx, t):
+                    updated[pattern_name] = updated.get(pattern_name, 0) + 1
+                    break
+    
     return updated
 
 
