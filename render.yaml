@@ -2,12 +2,11 @@ services:
   - type: web
     name: mitra-chatbot-api
     runtime: python
-    buildCommand: |
-      pip install -r requirements.txt
-      pip install torch --index-url https://download.pytorch.org/whl/cpu
+    pythonVersion: "3.12.0"
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: GEMINI_API_KEY
+      - key: GROQ_API_KEY
         sync: false
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
