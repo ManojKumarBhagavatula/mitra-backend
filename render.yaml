@@ -10,3 +10,5 @@ services:
         sync: false
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
+      - key: FRONTEND_ORIGIN
+        value: https://mitra-frontend-ivory.vercel.app
