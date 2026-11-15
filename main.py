@@ -1,7 +1,7 @@
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,14 +11,12 @@ from groq import Groq
 from pydantic import BaseModel, Field
 
 from firebase_config import db
-
 from pattern_engine import build_system_prompt, detect_patterns, infer_mode
 
 
 app = FastAPI(title="Mitra Chatbot API")
 
-# Set FRONTEND_ORIGIN to a comma-separated list of trusted browser origins.
-# Local development defaults to the Create React App development server.
+# FRONTEND_ORIGIN accepts a comma-separated list of exact trusted origins.
 allowed_origins = [
     origin.strip().rstrip("/")
     for origin in os.getenv("FRONTEND_ORIGIN", "http://localhost:3000").split(",")
@@ -40,19 +38,19 @@ groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     message: str = Field(min_length=1, max_length=10000)
-    mode: str = "auto"
+    mode: Literal["auto", "friend", "guide", "therapist"] = "auto"
 
 
 class FeedbackRequest(BaseModel):
     session_id: str
     message_id: str
-    rating: int
+    rating: Literal[1, -1]
 
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> dict:
-    """Validate the Firebase ID token sent by the signed-in frontend."""
+    """Validate the Firebase ID token supplied by the signed-in frontend."""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=401,
@@ -63,7 +61,7 @@ async def get_current_user(
     try:
         return firebase_auth.verify_id_token(credentials.credentials)
     except Exception:
-        # Do not expose token verification details to the caller.
+        # Never expose token verification details to the caller.
         raise HTTPException(
             status_code=401,
             detail="Invalid or expired authentication token",
@@ -84,16 +82,15 @@ def get_or_create_session(
         session = doc.to_dict() or {}
         owner_uid = session.get("owner_uid")
 
-        # Backward compatibility for the original first-session convention:
-        # the frontend used the authenticated Firebase UID as the document ID.
-        # Only that exact UID/document match may claim a legacy unowned record.
+        # Claim only the original legacy document whose ID was the signed-in
+        # Firebase UID. Other owner-less legacy sessions remain inaccessible.
         if not owner_uid and session_id == user_uid:
             doc_ref.update({"owner_uid": user_uid})
             session["owner_uid"] = user_uid
             return session_id, session
 
         if owner_uid != user_uid:
-            # Use 404 so callers cannot discover another user's session IDs.
+            # Avoid disclosing whether another user's session ID exists.
             raise HTTPException(status_code=404, detail="Session not found")
 
         return session_id, session
@@ -139,7 +136,7 @@ async def chat(req: ChatRequest, user: dict = Depends(get_current_user)):
         )
         reply = (response.choices[0].message.content or "").strip()
     except Exception:
-        # Keep provider details and credentials out of API responses.
+        # Provider details and credentials are intentionally not returned.
         raise HTTPException(
             status_code=502,
             detail="The response service is temporarily unavailable. Please try again.",
@@ -207,9 +204,6 @@ async def feedback(
     req: FeedbackRequest,
     user: dict = Depends(get_current_user),
 ):
-    if req.rating not in [1, -1]:
-        raise HTTPException(status_code=400, detail="Rating must be 1 or -1")
-
     session_ref = db.collection("sessions").document(req.session_id)
     session_doc = session_ref.get()
     if not session_doc.exists:
@@ -230,5 +224,5 @@ async def feedback(
 
 @app.get("/health")
 async def health():
-    # Public endpoint for hosting-provider health checks.
+    # Public endpoint for Render health checks.
     return {"status": "running", "service": "Mitra Chatbot API"}
