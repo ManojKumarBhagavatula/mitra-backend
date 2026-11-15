@@ -84,7 +84,7 @@ async def chat(req: ChatRequest):
 
     try:
         response = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
             messages=[{"role": "system", "content": system_prompt}] + history,
             max_tokens=500,
         )
